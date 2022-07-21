@@ -5,15 +5,13 @@ categories: [Homelab, Docker]
 tags: [homelab, docker, docker compose, traefik]
 ---
 
-My Traefik setup with Docker Compose
+Setup traefik using Docker Compose.
+This is my own setup of using Traefik together with Docker Compose.
+This guide is created for copy/pasting to your own machine.
 
-## Docker network
-A docker network is required if you want to use multiple `docker-compose.yml` files.
-I like to also name the network bridge that docker creates for this `br-proxy` (so it shows up in `ip a` with that name).
 
-```bash
-docker network create -o "com.docker.network.bridge.name"="br-proxy" proxy
-```
+![Traefik architecture](https://doc.traefik.io/traefik/assets/img/traefik-architecture.png)
+Check out Traefik [here](https://doc.traefik.io/traefik/).
 
 ## Traefik setup
 
@@ -27,6 +25,12 @@ touch traefik.yaml
 
 # Create logging directory for traefik
 mkdir /var/log/traefik
+
+# Create proxy network for all services
+# I like to also name the network bridge that docker creates for this
+docker network create \
+  -o "com.docker.network.bridge.name"="br-proxy" \
+  proxy
 ```
 
 ### docker-compose.yaml
@@ -149,7 +153,7 @@ acme:
 ## Custom middleware
 You might have noticed the `file-providers` directory, here we can specify dynamic configuration that do not need a restart from Traefik.
 
-#### Local whitelist middleware
+### Local whitelist middleware
 The purpose of this middleware is to allow only access from the local network:
 ```yaml
 http:
@@ -164,7 +168,7 @@ http:
 ```
 {: file="file-providers/local-whitelist.yaml" }
 
-#### Security Headers middleware
+### Security Headers middleware
 The purpose of this middleware is to add security headers to all responses.
 ```yaml
 http:
@@ -178,7 +182,7 @@ http:
 ```
 {: file="file-providers/security-headers.yaml" }
 
-#### Compression middleware
+### Compression middleware
 The purpose of this middleware is to compress all responses
 ```yaml
 http:
@@ -189,7 +193,49 @@ http:
 {: file="file-providers/compression.yaml" }
 
 ## Service setup
+To proxy your services through Traefik, some setup needs to be done.
 
 ### Docker
+If you want to proxy a different container on the same host as your traefik container, add these labels to your compose file:
+```yaml
+...
+services:
+  service1:
+    networks:
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      # Add this if traefik needs to listen to a specific port
+      # - "traefik.http.services.service1-svc.loadbalancer.server.port=8080"
+      - "traefik.http.routers.service1.rule=Host(`service1.mydomain.com`)"
+      - "traefik.http.routers.service1.entryPoints=websecure"
+      # Add your middlewares here
+      # - "traefik.http.routers.service1.middlewares=local-whitelist@file"
+```
+{: file="docker-compose.yaml" }
 
 ### Service on local network
+If you want to proxy a service on your local network, add a new file under the file-providers with the following contents:
+
+Prometheus example:
+```yaml
+http:
+  # Add the prometheus service:
+  services:
+    prometheus-svc: # <- This is a custom name
+      loadBalancer:
+        servers:
+          - url: "http://<ip/hostname of prometheus server>:9090/"
+
+  # Add the router that connects this service to a domain name:
+  routers:
+    prometheus-router: # <- This is a custom name
+      rule: "Host(`prometheus.mydomain.com`)"
+      service: "prometheus-svc@file"
+      middlewares:
+        - local-whitelist
+      entrypoints:
+        - websecure
+```
+{: file="file-providers/prometheus-proxy.yaml" }
